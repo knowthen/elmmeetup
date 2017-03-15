@@ -1,5 +1,11 @@
 # Valley Software Developers Elm Meetup
 
+### Install Dependencies
+
+```
+npm run reinstall
+```
+
 ### Serve locally:
 ```
 npm start

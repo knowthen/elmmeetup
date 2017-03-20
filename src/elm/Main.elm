@@ -350,7 +350,7 @@ toggleButtonColor isOn =
 
 viewDevice : Device -> Html Msg
 viewDevice device =
-    li [ class "lh-copy pv3 ph0-l bb b--black-10" ]
+    li [ class "lh-copy pv3 ph0-l bb b--black-10 fade-in" ]
         [ div [ class "flex w-100  lh-copy ph0-l " ]
             [ div [ class "fl w-75 br-100 f3" ]
                 [ text device.name ]
@@ -396,7 +396,7 @@ viewHomeDeviceSection heading devices =
 
 viewHome : Model -> Html Msg
 viewHome model =
-    div [ class "pa1 pa2-m ph5-m pa3-l ph6-l" ]
+    div [ class "pa1 pa2-m ph5-m pa3-l ph6-l fade-in" ]
         [ viewHomeDeviceSection "Off" <|
             List.filter (\d -> d.isOn == False) model.devices
         , viewHomeDeviceSection "On" <|
@@ -444,7 +444,7 @@ viewFormFieldSelectGroup lbl msg ops =
 
 viewEditAdd : Model -> Html Msg
 viewEditAdd model =
-    main_ [ class "pa1 pa2-m pa4-l black-80" ]
+    main_ [ class "pa1 pa2-m pa4-l black-80 fade-in" ]
         [ Html.form [ class "measure center", onSubmit Save ]
             [ fieldset [ class "ba b--transparent ph0 mh0" ]
                 [ legend [ class "f3 fw6 ph0 mh0" ]

@@ -3,6 +3,10 @@ module Main exposing (..)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
+import Http exposing (jsonBody)
+import Json.Decode as Decode
+import Json.Decode.Pipeline as JDP exposing (decode, required)
+import Json.Encode as Encode exposing (bool, encode, int, object, string)
 import List exposing (head)
 
 
@@ -11,13 +15,13 @@ import List exposing (head)
 
 type Page
     = Home
-    | AddEdit (Maybe Int)
+    | AddEdit (Maybe String)
 
 
 type alias Device =
     { name : String
     , ip : String
-    , id : Int
+    , id : String
     , type_ : Int
     , isOn : Bool
     }
@@ -27,7 +31,7 @@ newDevice : Device
 newDevice =
     { name = ""
     , ip = ""
-    , id = 0
+    , id = ""
     , type_ = 0
     , isOn = False
     }
@@ -35,10 +39,10 @@ newDevice =
 
 type alias Model =
     { device : Device
-    , editId : Maybe Int
+    , editId : Maybe String
     , devices : List Device
-    , nextId : Int
     , page : Page
+    , error : Maybe String
     }
 
 
@@ -47,9 +51,40 @@ initModel =
     { device = newDevice
     , editId = Nothing
     , devices = []
-    , nextId = 0
     , page = Home
+    , error = Nothing
     }
+
+
+url : String
+url =
+    "https://elm.trythen.com/devices"
+
+
+deviceDecoder : Decode.Decoder Device
+deviceDecoder =
+    decode Device
+        |> JDP.required "name" Decode.string
+        |> JDP.required "ip" Decode.string
+        |> JDP.required "id" Decode.string
+        |> JDP.required "type" Decode.int
+        |> JDP.required "isOn" Decode.bool
+
+
+devicesDecoder : Decode.Decoder (List Device)
+devicesDecoder =
+    Decode.list deviceDecoder
+
+
+devicesCmd : Cmd Msg
+devicesCmd =
+    Http.get url devicesDecoder
+        |> Http.send DevicesRequest
+
+
+init : ( Model, Cmd Msg )
+init =
+    ( initModel, devicesCmd )
 
 
 deviceTypes : List ( Int, String )
@@ -88,11 +123,14 @@ type Msg
     | IpInput String
     | TypeInput String
     | PageChange Page
-    | Toggle Int
+    | Toggle Device
     | Save
+    | DevicesRequest (Result Http.Error (List Device))
+    | AddRequest (Result Http.Error String)
+    | EditRequest (Result Http.Error ())
 
 
-update : Msg -> Model -> Model
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         NameInput name ->
@@ -105,10 +143,10 @@ update msg model =
             typeInput type_ model
 
         PageChange Home ->
-            { model | page = Home, device = newDevice, editId = Nothing }
+            ( { model | page = Home, device = newDevice, editId = Nothing }, Cmd.none )
 
         PageChange (AddEdit Nothing) ->
-            { model | page = AddEdit Nothing }
+            ( { model | page = AddEdit Nothing }, Cmd.none )
 
         PageChange (AddEdit (Just id)) ->
             pageChange id model
@@ -116,11 +154,30 @@ update msg model =
         Save ->
             save model
 
-        Toggle id ->
-            toggle id model
+        Toggle device ->
+            toggle device model
+
+        DevicesRequest (Ok devices) ->
+            ( { model | devices = devices }, Cmd.none )
+
+        DevicesRequest (Err err) ->
+            ( { model | error = Just <| toString err }, Cmd.none )
+
+        AddRequest (Ok id) ->
+            -- TODO: add
+            ( { model | page = Home, device = newDevice }, devicesCmd )
+
+        AddRequest (Err err) ->
+            ( { model | error = Just <| toString err }, Cmd.none )
+
+        EditRequest (Ok ()) ->
+            ( { model | page = Home, device = newDevice, editId = Nothing }, devicesCmd )
+
+        EditRequest (Err err) ->
+            ( { model | error = Just <| toString err }, Cmd.none )
 
 
-nameInput : String -> Model -> Model
+nameInput : String -> Model -> ( Model, Cmd Msg )
 nameInput name model =
     let
         device =
@@ -129,10 +186,10 @@ nameInput name model =
         updatedDevice =
             { device | name = name }
     in
-        { model | device = updatedDevice }
+        ( { model | device = updatedDevice }, Cmd.none )
 
 
-ipInput : String -> Model -> Model
+ipInput : String -> Model -> ( Model, Cmd Msg )
 ipInput ip model =
     let
         device =
@@ -141,10 +198,10 @@ ipInput ip model =
         updatedDevice =
             { device | ip = ip }
     in
-        { model | device = updatedDevice }
+        ( { model | device = updatedDevice }, Cmd.none )
 
 
-typeInput : String -> Model -> Model
+typeInput : String -> Model -> ( Model, Cmd Msg )
 typeInput type_ model =
     let
         intType_ =
@@ -157,10 +214,10 @@ typeInput type_ model =
         updatedDevice =
             { device | type_ = intType_ }
     in
-        { model | device = updatedDevice }
+        ( { model | device = updatedDevice }, Cmd.none )
 
 
-pageChange : Int -> Model -> Model
+pageChange : String -> Model -> ( Model, Cmd Msg )
 pageChange id model =
     let
         device =
@@ -169,26 +226,21 @@ pageChange id model =
                 |> head
                 |> Maybe.withDefault newDevice
     in
-        { model | page = AddEdit <| Just id, editId = Just id, device = device }
+        ( { model | page = AddEdit <| Just id, editId = Just id, device = device }
+        , Cmd.none
+        )
 
 
-toggle : Int -> Model -> Model
-toggle id model =
+toggle : Device -> Model -> ( Model, Cmd Msg )
+toggle device model =
     let
-        devices =
-            model.devices
-                |> List.map
-                    (\d ->
-                        if d.id == id then
-                            { d | isOn = not d.isOn }
-                        else
-                            d
-                    )
+        updatedDevice =
+            { device | isOn = not device.isOn }
     in
-        { model | devices = devices }
+        save { model | device = updatedDevice, editId = Just device.id }
 
 
-save : Model -> Model
+save : Model -> ( Model, Cmd Msg )
 save model =
     case model.editId of
         Just id ->
@@ -198,45 +250,63 @@ save model =
             addDevice model
 
 
-editDevice : Int -> Model -> Model
+editDevice : String -> Model -> ( Model, Cmd Msg )
 editDevice id model =
+    ( model, editDeviceCmd model.device )
+
+
+addDeviceCmd : Device -> Cmd Msg
+addDeviceCmd device =
     let
-        updatedDevices =
-            List.map
-                (\d ->
-                    if d.id == id then
-                        model.device
-                    else
-                        d
-                )
-                model.devices
+        postBody =
+            Encode.object
+                [ ( "name", string device.name )
+                , ( "ip", string device.ip )
+                , ( "isOn", bool device.isOn )
+                , ( "type", int device.type_ )
+                ]
+                |> jsonBody
     in
-        { model
-            | devices = updatedDevices
-            , editId = Nothing
-            , page = Home
+        Http.post url postBody (Decode.field "name" Decode.string)
+            |> Http.send AddRequest
+
+
+editDeviceCmd : Device -> Cmd Msg
+editDeviceCmd device =
+    let
+        putBody =
+            Encode.object
+                [ ( "name", string device.name )
+                , ( "ip", string device.ip )
+                , ( "isOn", bool device.isOn )
+                , ( "type", int device.type_ )
+                ]
+                |> jsonBody
+    in
+        put (url ++ "/" ++ device.id) putBody
+            |> Http.send EditRequest
+
+
+put : String -> Http.Body -> Http.Request ()
+put url body =
+    Http.request
+        { method = "PUT"
+        , headers = []
+        , url = url
+        , body = body
+        , expect = Http.expectStringResponse (\_ -> Ok ())
+        , timeout = Nothing
+        , withCredentials = False
         }
 
 
-addDevice : Model -> Model
+addDevice : Model -> ( Model, Cmd Msg )
 addDevice model =
     let
-        device =
-            model.device
-
-        updatedDevice =
-            { device | id = model.nextId }
+        cmd =
+            addDeviceCmd model.device
     in
-        { model
-            | devices = updatedDevice :: model.devices
-            , device = newDevice
-            , nextId = model.nextId + 1
-            , page = Home
-        }
-
-
-
--- View
+        ( model, cmd )
 
 
 labelClasses : String
@@ -357,7 +427,7 @@ viewDevice device =
             , div [ class "fl w-25 pl3 " ]
                 [ a
                     [ class <| "fr f6 link pointer dim ba bw1 ph3 pv1 dib " ++ toggleButtonColor device.isOn
-                    , onClick <| Toggle device.id
+                    , onClick <| Toggle device
                     ]
                     [ text <| onDescription device.isOn ]
                 ]
@@ -473,10 +543,16 @@ viewEditAdd model =
         ]
 
 
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.none
+
+
 main : Program Never Model Msg
 main =
-    Html.beginnerProgram
-        { model = initModel
+    Html.program
+        { init = init
         , update = update
         , view = view
+        , subscriptions = subscriptions
         }

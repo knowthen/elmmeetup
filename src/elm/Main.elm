@@ -1,12 +1,9 @@
-module Main exposing (..)
+port module Main exposing (..)
 
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Http exposing (jsonBody)
-import Json.Decode as Decode
-import Json.Decode.Pipeline as JDP exposing (decode, required)
-import Json.Encode as Encode exposing (bool, encode, int, object, string)
 import List exposing (head)
 
 
@@ -61,30 +58,9 @@ url =
     "https://elm.trythen.com/devices"
 
 
-deviceDecoder : Decode.Decoder Device
-deviceDecoder =
-    decode Device
-        |> JDP.required "name" Decode.string
-        |> JDP.required "ip" Decode.string
-        |> JDP.required "id" Decode.string
-        |> JDP.required "type" Decode.int
-        |> JDP.required "isOn" Decode.bool
-
-
-devicesDecoder : Decode.Decoder (List Device)
-devicesDecoder =
-    Decode.list deviceDecoder
-
-
-devicesCmd : Cmd Msg
-devicesCmd =
-    Http.get url devicesDecoder
-        |> Http.send DevicesRequest
-
-
 init : ( Model, Cmd Msg )
 init =
-    ( initModel, devicesCmd )
+    ( initModel, Cmd.none )
 
 
 deviceTypes : List ( Int, String )
@@ -125,9 +101,9 @@ type Msg
     | PageChange Page
     | Toggle Device
     | Save
-    | DevicesRequest (Result Http.Error (List Device))
-    | AddRequest (Result Http.Error String)
-    | EditRequest (Result Http.Error ())
+    | NewDevice Device
+    | ChangedDevice Device
+    | Saved ()
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -157,24 +133,25 @@ update msg model =
         Toggle device ->
             toggle device model
 
-        DevicesRequest (Ok devices) ->
-            ( { model | devices = devices }, Cmd.none )
+        NewDevice device ->
+            ( { model | devices = device :: model.devices }, Cmd.none )
 
-        DevicesRequest (Err err) ->
-            ( { model | error = Just <| toString err }, Cmd.none )
+        Saved () ->
+            ( { model | page = Home, device = newDevice, editId = Nothing }, Cmd.none )
 
-        AddRequest (Ok id) ->
-            -- TODO: add
-            ( { model | page = Home, device = newDevice }, devicesCmd )
-
-        AddRequest (Err err) ->
-            ( { model | error = Just <| toString err }, Cmd.none )
-
-        EditRequest (Ok ()) ->
-            ( { model | page = Home, device = newDevice, editId = Nothing }, devicesCmd )
-
-        EditRequest (Err err) ->
-            ( { model | error = Just <| toString err }, Cmd.none )
+        ChangedDevice device ->
+            let
+                updatedDevices =
+                    List.map
+                        (\d ->
+                            if d.id == device.id then
+                                device
+                            else
+                                d
+                        )
+                        model.devices
+            in
+                ( { model | devices = updatedDevices }, Cmd.none )
 
 
 nameInput : String -> Model -> ( Model, Cmd Msg )
@@ -252,39 +229,7 @@ save model =
 
 editDevice : String -> Model -> ( Model, Cmd Msg )
 editDevice id model =
-    ( model, editDeviceCmd model.device )
-
-
-addDeviceCmd : Device -> Cmd Msg
-addDeviceCmd device =
-    let
-        postBody =
-            Encode.object
-                [ ( "name", string device.name )
-                , ( "ip", string device.ip )
-                , ( "isOn", bool device.isOn )
-                , ( "type", int device.type_ )
-                ]
-                |> jsonBody
-    in
-        Http.post url postBody (Decode.field "name" Decode.string)
-            |> Http.send AddRequest
-
-
-editDeviceCmd : Device -> Cmd Msg
-editDeviceCmd device =
-    let
-        putBody =
-            Encode.object
-                [ ( "name", string device.name )
-                , ( "ip", string device.ip )
-                , ( "isOn", bool device.isOn )
-                , ( "type", int device.type_ )
-                ]
-                |> jsonBody
-    in
-        put (url ++ "/" ++ device.id) putBody
-            |> Http.send EditRequest
+    ( model, updateDevice model.device )
 
 
 put : String -> Http.Body -> Http.Request ()
@@ -304,7 +249,7 @@ addDevice : Model -> ( Model, Cmd Msg )
 addDevice model =
     let
         cmd =
-            addDeviceCmd model.device
+            addNewDevice model.device
     in
         ( model, cmd )
 
@@ -543,9 +488,32 @@ viewEditAdd model =
         ]
 
 
+port newDeviceAdded : (Device -> msg) -> Sub msg
+
+
+port deviceChanged : (Device -> msg) -> Sub msg
+
+
+port deviceAdded : (() -> msg) -> Sub msg
+
+
+port deviceUpdated : (() -> msg) -> Sub msg
+
+
+port addNewDevice : Device -> Cmd msg
+
+
+port updateDevice : Device -> Cmd msg
+
+
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.none
+    Sub.batch
+        [ newDeviceAdded NewDevice
+        , deviceAdded Saved
+        , deviceUpdated Saved
+        , deviceChanged ChangedDevice
+        ]
 
 
 main : Program Never Model Msg
